@@ -1,56 +1,46 @@
 package com.zsirosd.thread;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.channels.AsynchronousFileChannel;
-import java.nio.channels.CompletionHandler;
+import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.util.Queue;
+import java.util.concurrent.BlockingQueue;
 
 public class FileReadingDispatcher implements Runnable {
 
     private final Path filePath;
-    private final Queue<ByteBuffer> bufferQueue;
-    private final int maxBufferChunkSize = 100000;
+    private final BlockingQueue<ByteBuffer> outputBufferQueue;
 
-    public FileReadingDispatcher(Path filePath, Queue<ByteBuffer> bufferQueue) {
+    public FileReadingDispatcher(Path filePath, BlockingQueue<ByteBuffer> outputBufferQueue) {
         this.filePath = filePath;
-        this.bufferQueue = bufferQueue;
+        this.outputBufferQueue = outputBufferQueue;
     }
 
     @Override
     public void run() {
+        String threadName = Thread.currentThread().getName();
 
+        System.out.println(threadName + " started.");
         try {
-            AsynchronousFileChannel channel = AsynchronousFileChannel.open(
-                    filePath, StandardOpenOption.READ);
-            long maxChannelPointerPosition = channel.size();
+            RandomAccessFile fileReader = new RandomAccessFile(filePath.toFile(), "r");
+            FileChannel channel = fileReader.getChannel();
+            double maxBufferSize = 1000;
+            int maxAmountOfBuffers = (int) Math.ceil((double) channel.size() / maxBufferSize);
 
-            ByteBuffer buffer;
-
-            // execute in a single thread
-            if (maxChannelPointerPosition < maxBufferChunkSize) {
-                buffer = ByteBuffer.allocate((int) maxChannelPointerPosition); // maxPosition is lower than maxBufferChunkSize which is an int value so we can safely cast
-                channel.read(buffer, 0);
-                bufferQueue.add(buffer);
-            } else {
-                buffer = ByteBuffer.allocate(maxBufferChunkSize);
-                channel.read(
-                        buffer, 0, buffer, new CompletionHandler<>() {
-
-                            @Override
-                            public void completed(Integer result, ByteBuffer attachment) {
-                                bufferQueue.add(attachment);
-                            }
-
-                            @Override
-                            public void failed(Throwable exc, ByteBuffer attachment) {
-                                exc.printStackTrace();
-                            }
-                        });
+            // TODO what if maxAmountOfBuffers larger than Integer.MAX_VALUE?
+            long currentPosition = 0L;
+            for (int i = 0; i < maxAmountOfBuffers; i++) {
+                ByteBuffer buffer = ByteBuffer.allocate((int) maxBufferSize);
+                channel.read(buffer, currentPosition);
+                //System.out.println("Add buffer to queue: " + outputBufferQueue.hashCode());
+                outputBufferQueue.put(buffer);
+                currentPosition += maxBufferSize;
+                fileReader.seek(currentPosition);
             }
-        } catch (IOException e) {
+
+            System.out.println("All buffers read in: " + threadName + ".");
+        } catch (IOException | InterruptedException e) {
             e.printStackTrace();
         }
 

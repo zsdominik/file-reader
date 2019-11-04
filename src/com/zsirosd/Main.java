@@ -1,46 +1,80 @@
 package com.zsirosd;
 
 import com.zsirosd.preprocessor.ArgumentPreprocessor;
+import com.zsirosd.thread.FileReadingDispatcher;
+import com.zsirosd.thread.MergeSortProcessor;
+import com.zsirosd.thread.QueueProcessor;
 
-import java.io.File;
-import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.LinkedBlockingQueue;
 
 public class Main {
 
     public static void main(String[] args) {
+
         String processingMode;
-        List<Path> filePathsToRead;
+
+        // path of the file, queue that contains the buffers that have been read
+        ConcurrentMap<Path, BlockingQueue<ByteBuffer>> readChunkQueuesByPath;
         ArgumentPreprocessor argumentPreprocessor = new ArgumentPreprocessor();
 
         if (args.length > 0) {
             processingMode = args[0];
-            if (!"thread".equals(processingMode) || !"executor".equals(processingMode)) {
+            if (ProcessingMode.THREAD.equals(processingMode)) {
+
+                readChunkQueuesByPath = argumentPreprocessor.createPathAndBufferQueueFromArgs(Arrays.copyOfRange(args, 1, args.length));
+
+                // start to read the chunks of each file
+                readChunkQueuesByPath.forEach((path, byteBuffers) -> {
+
+                    // read chunks of files
+                    BlockingQueue<ByteBuffer> readChunks = byteBuffers;
+                    Thread fileReader = new Thread(new FileReadingDispatcher(path, readChunks));
+                    fileReader.start();
+
+                    // sort the chunks one by one
+                    BlockingQueue<List<String>> sortedChunks = new LinkedBlockingQueue<>();
+                    Thread queueProcessor = new Thread(new QueueProcessor(readChunks, sortedChunks, fileReader));
+                    queueProcessor.start();
+
+                    // merge sort the sorted chunks
+                    Thread mergeSort = new Thread(new MergeSortProcessor(queueProcessor, sortedChunks));
+                    mergeSort.start();
+                });
+
+
+            } else if (ProcessingMode.EXECUTOR.equals(processingMode)) {
+                // TODO implement processing with executors
+            } else {
                 System.out.println("The first argument should be the processing mode");
                 System.out.println("thread/executor");
                 return;
             }
 
-            filePathsToRead = argumentPreprocessor.getFilePathsByArgs(Arrays.copyOfRange(args, 1, args.length - 1));
-
-            // TODO implement processing with native threads
-            // TODO implement processing with executors
 
         } else {
+            // default processing without args
+            // read all files and process them with the executor mode
+            //
             processingMode = "executor";
             System.out.println("Default processing mode is executor.");
             System.out.println("Reading all of the files in the current directory");
-            try {
-                filePathsToRead = argumentPreprocessor.getAllFilesOfCurrentDirectory();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
         }
 
 
+    }
 
+    private static Map<Path, ConcurrentLinkedQueue<ByteBuffer>> addBufferQueueToPath(Map<Path, ConcurrentLinkedQueue<ByteBuffer>> readChunksByPath, Path path) {
+        readChunksByPath.put(path, new ConcurrentLinkedQueue<>());
+        return readChunksByPath;
     }
 
 
