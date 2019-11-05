@@ -1,22 +1,21 @@
 package com.zsirosd;
 
-import com.zsirosd.preprocessor.ArgumentPreprocessor;
-import com.zsirosd.thread.FileReadingDispatcher;
-import com.zsirosd.thread.MergeSortProcessor;
-import com.zsirosd.thread.QueueProcessor;
+import com.zsirosd.executor.ArgumentPreprocessor;
+import com.zsirosd.thread.FileReader;
+import com.zsirosd.thread.CollectAndWriteBuffers;
+import com.zsirosd.thread.ConvertAndSortByteBufferToStringArray;
 
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public class Main {
+
 
     public static void main(String[] args) {
 
@@ -25,7 +24,6 @@ public class Main {
         // path of the file, queue that contains the buffers that have been read
         ConcurrentMap<Path, BlockingQueue<ByteBuffer>> readChunkQueuesByPath;
         ArgumentPreprocessor argumentPreprocessor = new ArgumentPreprocessor();
-
         if (args.length > 0) {
             processingMode = args[0];
             if (ProcessingMode.THREAD.equals(processingMode)) {
@@ -37,16 +35,16 @@ public class Main {
 
                     // read chunks of files
                     BlockingQueue<ByteBuffer> readChunks = byteBuffers;
-                    Thread fileReader = new Thread(new FileReadingDispatcher(path, readChunks));
+                    Thread fileReader = new Thread(new FileReader(path, readChunks));
                     fileReader.start();
 
                     // sort the chunks one by one
-                    BlockingQueue<List<String>> sortedChunks = new LinkedBlockingQueue<>();
-                    Thread queueProcessor = new Thread(new QueueProcessor(readChunks, sortedChunks, fileReader));
+                    BlockingQueue<String[]> sortedChunks = new LinkedBlockingQueue<>();
+                    Thread queueProcessor = new Thread(new ConvertAndSortByteBufferToStringArray(readChunks, sortedChunks, fileReader, path));
                     queueProcessor.start();
 
                     // merge sort the sorted chunks
-                    Thread mergeSort = new Thread(new MergeSortProcessor(queueProcessor, sortedChunks));
+                    Thread mergeSort = new Thread(new CollectAndWriteBuffers(queueProcessor, sortedChunks, path));
                     mergeSort.start();
                 });
 
@@ -68,7 +66,6 @@ public class Main {
             System.out.println("Default processing mode is executor.");
             System.out.println("Reading all of the files in the current directory");
         }
-
 
     }
 
